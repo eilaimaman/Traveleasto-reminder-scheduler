@@ -1,6 +1,10 @@
 name: Process TravelEasto reminders
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/process-reminders.yml"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
