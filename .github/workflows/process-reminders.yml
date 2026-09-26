@@ -1,0 +1,41 @@
+name: Process TravelEasto reminders
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: traveleasto-reminders
+  cancel-in-progress: false
+
+jobs:
+  process-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Process due reminders
+        env:
+          REMINDER_ENDPOINT: https://traveleasto-reminders.eilaimaman672.chatgpt.site/api/reminders/process
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "CRON_SECRET is not configured."
+            exit 1
+          fi
+
+          response_file="$(mktemp)"
+          status="$(curl             --silent             --show-error             --retry 3             --retry-delay 10             --retry-all-errors             --max-time 30             --output "${response_file}"             --write-out "%{http_code}"             --request POST             "${REMINDER_ENDPOINT}"             --header "Authorization: Bearer ${CRON_SECRET}"             --header "Content-Type: application/json"             --data "{}")"
+
+          cat "${response_file}"
+
+          if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+            echo
+            echo "Reminder endpoint returned HTTP ${status}."
+            exit 1
+          fi
