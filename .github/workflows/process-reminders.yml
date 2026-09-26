@@ -1,3 +1,4 @@
+# Secure scheduler: GitHub OIDC, no stored secret
 name: Process TravelEasto reminders
 
 on:
