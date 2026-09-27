@@ -1,0 +1,47 @@
+name: Check TravelEasto staging flights
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: traveleasto-staging-flights
+  cancel-in-progress: false
+
+jobs:
+  check-flights:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STAGING_ENDPOINT: https://traveleasto-staging-eilai.eilaimaman672.chatgpt.site/api/flights/check
+      STAGING_SIWC_BYPASS: ${{ secrets.STAGING_SIWC_BYPASS }}
+    steps:
+      - name: Check flight changes in isolated staging
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_SIWC_BYPASS}" ]; then
+            echo "Staging Site access secret is not configured; no request was sent."
+            exit 0
+          fi
+          oidc_response="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=traveleasto-staging-flights")"
+          oidc_token="$(printf '%s' "${oidc_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::add-mask::${oidc_token}"
+
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error --retry 2 --retry-delay 5 \
+            --max-time 90 --output "${response_file}" --write-out "%{http_code}" \
+            --request POST "${STAGING_ENDPOINT}" \
+            --header "OAI-Sites-Authorization: Bearer ${STAGING_SIWC_BYPASS}" \
+            --header "Authorization: Bearer ${oidc_token}" \
+            --header "Content-Type: application/json" --data '{}')"
+          if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+            echo "Staging flight check returned HTTP ${status}."
+            exit 1
+          fi
+          echo "Staging flight check completed."
