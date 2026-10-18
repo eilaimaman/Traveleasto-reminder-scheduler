@@ -1,0 +1,59 @@
+name: Process TravelEasto agent tasks
+
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/process-agent-tasks.yml']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check due tasks without sending reminders
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: traveleasto-agent-tasks
+  cancel-in-progress: false
+
+jobs:
+  process-tasks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Process agent-owned task reminders
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_response=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=traveleasto-agent-tasks")
+          oidc_token=$(jq -er '.value' <<< "$oidc_response")
+          echo "::add-mask::$oidc_token"
+          endpoint="https://traveleasto-reminders.eilaimaman672.chatgpt.site/api/tasks/process"
+          if [ "$EVENT_NAME" = "push" ]; then
+            endpoint="$endpoint?probe=$GITHUB_SHA"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$DRY_RUN" != "false" ]; then
+            endpoint="$endpoint?dryRun=1"
+          fi
+          response=$(mktemp)
+          status=$(curl --silent --show-error --max-time 100 --retry 2 --retry-delay 5 \
+            -X POST -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            -o "$response" -w '%{http_code}' "$endpoint")
+          jq '{due, sent, failed, probeSent, sentAt}' "$response"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Task processor returned HTTP $status"
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "push" ]; then
+            jq -e '.probeSent == true' "$response" > /dev/null
+          fi
