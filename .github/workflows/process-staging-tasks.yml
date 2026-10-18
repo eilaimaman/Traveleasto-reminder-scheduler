@@ -1,0 +1,61 @@
+name: Process TravelEasto staging agent tasks
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/process-staging-tasks.yml']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Readiness check without sending email'
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: traveleasto-staging-agent-tasks
+  cancel-in-progress: false
+jobs:
+  process-tasks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STAGING_ENDPOINT: https://traveleasto-staging-eilai.eilaimaman672.chatgpt.site/api/tasks/process
+      STAGING_SIWC_BYPASS: ${{ secrets.STAGING_SIWC_BYPASS }}
+      EVENT_NAME: ${{ github.event_name }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - name: Process personal task reminders in staging only
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_SIWC_BYPASS}" ]; then
+            echo "Staging Site access secret is missing; task reminders were not processed."
+            exit 1
+          fi
+          oidc_response="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=traveleasto-staging-tasks")"
+          oidc_token="$(printf '%s' "${oidc_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::add-mask::${oidc_token}"
+          endpoint="${STAGING_ENDPOINT}"
+          if [ "${EVENT_NAME}" = "push" ] || [ "${DRY_RUN}" = "true" ]; then
+            endpoint="${endpoint}?dryRun=1"
+          fi
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error --retry 2 --retry-delay 5 \
+            --max-time 100 --output "${response_file}" --write-out "%{http_code}" \
+            --request POST "${endpoint}" \
+            --header "OAI-Sites-Authorization: Bearer ${STAGING_SIWC_BYPASS}" \
+            --header "Authorization: Bearer ${oidc_token}" \
+            --header "Content-Type: application/json" --data '{}')"
+          if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+            echo "Staging task processor returned HTTP ${status}."
+            exit 1
+          fi
+          python3 - "${response_file}" <<'PY'
+          import json,sys
+          data=json.load(open(sys.argv[1]))
+          print(json.dumps({key:data.get(key) for key in ('dryRun','due','sent','failed')}))
+          PY
