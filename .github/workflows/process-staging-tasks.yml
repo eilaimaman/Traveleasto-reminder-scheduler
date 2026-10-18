@@ -1,7 +1,5 @@
 name: Process TravelEasto staging agent tasks
 on:
-  schedule:
-    - cron: '2-59/5 * * * *'
   push:
     branches: [main]
     paths: ['.github/workflows/process-staging-tasks.yml']
