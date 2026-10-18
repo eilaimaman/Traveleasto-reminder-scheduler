@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: write
 
 concurrency:
   group: traveleasto-agent-tasks
@@ -40,7 +41,7 @@ jobs:
           echo "::add-mask::$oidc_token"
           endpoint="https://traveleasto-reminders.eilaimaman672.chatgpt.site/api/tasks/process"
           if [ "$EVENT_NAME" = "push" ]; then
-            endpoint="$endpoint?probe=$GITHUB_SHA"
+            endpoint="$endpoint?dryRun=1"
           elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$DRY_RUN" != "false" ]; then
             endpoint="$endpoint?dryRun=1"
           fi
@@ -54,6 +55,16 @@ jobs:
             echo "Task processor returned HTTP $status"
             exit 1
           fi
-          if [ "$EVENT_NAME" = "push" ]; then
-            jq -e '.probeSent == true' "$response" > /dev/null
-          fi
+      - name: Start authenticated delivery after scheduler update
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 30 \
+            -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/eilaimaman/traveleasto-reminder-scheduler/actions/workflows/process-agent-tasks.yml/dispatches \
+            --data '{"ref":"main","inputs":{"dry_run":false}}'
